@@ -1,0 +1,6 @@
+usage-bar
+UsageBar.app/
+*.log
+*.err
+gpt_cache.json
+.DS_Store
