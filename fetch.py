@@ -13,8 +13,10 @@ HOME = os.path.expanduser("~")
 DIR = os.path.join(HOME, "usage-bar")
 AUTH = os.path.join(HOME, ".codex", "auth.json")
 GPT_CACHE = os.path.join(DIR, "gpt_cache.json")
+CLAUDE_CACHE = os.path.join(DIR, "claude_cache.json")
 LOG = os.path.join(DIR, "fetch.log")
 GPT_INTERVAL = 300          # seconds between real GPT requests (usage-saving)
+CLAUDE_INTERVAL = 90        # 무료 GET이지만 429(rate-limit) 방지 — 폴 25s여도 실호출은 90s마다(검증된 안전레이트)
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CONFIG_TOML = os.path.join(HOME, ".codex", "config.toml")
 
@@ -41,7 +43,47 @@ def log(msg):
         pass
 
 # ---------------- Claude ----------------
+def _load_cache():
+    try:
+        return json.load(open(CLAUDE_CACHE))
+    except Exception:
+        return {}
+
 def claude_usage():
+    """Throttled to CLAUDE_INTERVAL regardless of success/failure so a burst of
+    polls (or app restarts) never hammers the /usage endpoint into a 429 storm.
+    On any error, serves the last known-good snapshot with stale=True."""
+    now = time.time()
+    cache = _load_cache()
+    # 최근에 이미 시도했으면(성공이든 실패든) API 안 두드리고 캐시로 응답
+    if now - cache.get("_last_attempt", 0) < CLAUDE_INTERVAL:
+        if cache.get("last_good"):
+            g = dict(cache["last_good"])
+            if not cache.get("ok"):
+                g["stale"] = True
+            return g
+        return {"ok": False, "err": cache.get("err", "api")}
+    # 이제 실제 호출
+    out = _claude_usage_live()
+    entry = {"_last_attempt": now, "ok": bool(out.get("ok"))}
+    if out.get("ok"):
+        entry["last_good"] = out
+    else:
+        entry["err"] = out.get("err", "api")
+        if cache.get("last_good"):
+            entry["last_good"] = cache["last_good"]   # 마지막 정상값 보존
+    try:
+        json.dump(entry, open(CLAUDE_CACHE, "w"))
+    except Exception:
+        pass
+    if out.get("ok"):
+        return out
+    if entry.get("last_good"):
+        g = dict(entry["last_good"]); g["stale"] = True
+        return g
+    return out
+
+def _claude_usage_live():
     try:
         raw = subprocess.check_output(
             ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
@@ -138,15 +180,22 @@ def gpt_usage_live():
         v = h.get(k)
         try: return float(v)
         except Exception: return None
+    # codex flips which bucket is "primary" vs "secondary", so classify each by its
+    # window length instead of trusting the name: ~300min => 5h, ~10080min => weekly.
+    raw = []
+    for pre in ("primary", "secondary"):
+        wm = num(f"x-codex-{pre}-window-minutes")
+        pct = num(f"x-codex-{pre}-used-percent")
+        if wm and wm > 0 and pct is not None:
+            raw.append({"pct": pct, "reset_at": num(f"x-codex-{pre}-reset-at"),
+                        "window_min": wm})
+    five = min((b for b in raw if b["window_min"] <= 600), key=lambda b: b["window_min"], default=None)
+    week = max((b for b in raw if b["window_min"] > 600), key=lambda b: b["window_min"], default=None)
     out = {
         "ok": True,
         "plan": h.get("x-codex-plan-type", plan),
-        "primary": {"pct": num("x-codex-primary-used-percent"),
-                    "reset_at": num("x-codex-primary-reset-at"),
-                    "window_min": num("x-codex-primary-window-minutes")},
-        "secondary": {"pct": num("x-codex-secondary-used-percent"),
-                      "reset_at": num("x-codex-secondary-reset-at"),
-                      "window_min": num("x-codex-secondary-window-minutes")},
+        "fivehour": five,        # {pct,reset_at,window_min} or None
+        "weekly": week,          # {pct,reset_at,window_min} or None
     }
     r.close()                                     # abort stream early = minimal generation
     return out
@@ -176,7 +225,8 @@ def gpt_usage():
 
 if __name__ == "__main__":
     if "--gpt-force" in sys.argv:                  # manual refresh ignores cache
-        try: os.remove(GPT_CACHE)
-        except Exception: pass
+        for cf in (GPT_CACHE, CLAUDE_CACHE):
+            try: os.remove(cf)
+            except Exception: pass
     result = {"claude": claude_usage(), "gpt": gpt_usage(), "ts": time.time()}
-    print(json.dumps(result))
+    print(json.dumps(result, ensure_ascii=False))

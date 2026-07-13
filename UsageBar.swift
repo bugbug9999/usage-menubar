@@ -76,7 +76,7 @@ final class App: NSObject, NSApplicationDelegate {
     func render(_ obj: [String: Any]) {
         let claude = d(obj["claude"]), gpt = d(obj["gpt"])
         let cWeek = num(d(claude["weekly"])["pct"])
-        let gWeek = num(d(gpt["secondary"])["pct"])
+        let gWeek = num(d(gpt["weekly"])["pct"])
 
         // ---- menu bar title: "C95 G11" colored by severity ----
         let title = NSMutableAttributedString()
@@ -133,9 +133,9 @@ final class App: NSObject, NSApplicationDelegate {
         if (gpt["ok"] as? Bool) ?? false {
             let stale = (gpt["stale"] as? Bool) ?? false
             header("GPT(sol) · \(gpt["plan"] as? String ?? "")\(stale ? " · stale" : "")")
-            let pr = d(gpt["primary"]), sc = d(gpt["secondary"])
-            row("5시간", num(pr["pct"]), fmtReset(unix: num(pr["reset_at"])))
-            row("주간", num(sc["pct"]), fmtReset(unix: num(sc["reset_at"])))
+            let fh = d(gpt["fivehour"]), wk = d(gpt["weekly"])
+            if !fh.isEmpty { row("5시간", num(fh["pct"]), fmtReset(unix: num(fh["reset_at"]))) }
+            row("주간", num(wk["pct"]), fmtReset(unix: num(wk["reset_at"])))
         } else {
             header("GPT · 오류"); row("codex", nil, "")
         }

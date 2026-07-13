@@ -32,9 +32,10 @@ No API keys. It reads the OAuth tokens your local Claude Code and Codex CLIs alr
   weekly-all, and weekly-scoped (Fable) percentages.
 - **GPT** — reads the ChatGPT OAuth access token from `~/.codex/auth.json` and sends a tiny request to
   `POST https://chatgpt.com/backend-api/codex/responses`. The usage comes back in response **headers**
-  (`x-codex-primary-used-percent` = 5h, `x-codex-secondary-used-percent` = weekly). The model name is
-  auto-detected from `~/.codex/config.toml`. Because that request consumes a sliver of quota, it is
-  cached and only re-fetched every 5 minutes.
+  (`x-codex-{primary,secondary}-used-percent`). Codex flips which bucket is "primary" vs "secondary",
+  so each is classified by its `*-window-minutes` instead (~300min → 5h, ~10080min → weekly). The model
+  name is auto-detected from `~/.codex/config.toml`. Because that request consumes a sliver of quota, it
+  is cached and only re-fetched every 5 minutes.
 
 The codex access token expires hourly; `fetch.py` refreshes it via the OAuth endpoint before expiry and
 rewrites `auth.json` atomically.
